@@ -220,57 +220,97 @@
   <Namespace>OpenQA.Selenium.Safari</Namespace>
   <Namespace>OpenQA.Selenium.Support.UI</Namespace>
   <Namespace>OpenQA.Selenium.VirtualAuth</Namespace>
+  <Namespace>System.Drawing</Namespace>
+  <Namespace>System.Windows.Forms</Namespace>
+  <Namespace>System.Drawing.Imaging</Namespace>
 </Query>
 
-void Main()
+void Main(string[] args)
 {
-	var driver = InitDriver(
-		path: @"C:\Users\vb\Downloads\chromedriver-win64\chromedriver-win64\chromedriver.exe", 
-		headless: false);
+	Directory.SetCurrentDirectory(Path.GetDirectoryName(Util.CurrentQueryPath));
 	
-	var url = new Uri("https://www.gandul.ro/?p=20141190&preview=true/?utm_source=square_banner&utm_id=campanie_interna");
+	var configPath = args is null || args.Length < 1 ? "./config.json" : args[0];
+	var configJson = File.ReadAllText(configPath);
+	var config = JsonConvert.DeserializeObject<Config>(configJson);
 	
-	driver.Navigate().GoToUrl(url);
+	var driver = InitDriver(path: config.WebDriverPath, config.Headless);
 	
-	Thread.Sleep(2000);
-	driver.FindElement(By.XPath("/html/body/div[13]/div[2]/div[1]/div[2]/div[2]/button[1]")).Click();
-	
-	driver.CaptureAds(
-		queries: new List<AdQuery>
+	foreach (var target in config.Targets)
+	{
+		var url = new Uri(target.Url);
+
+		driver.Navigate().GoToUrl(url);
+
+		Thread.Sleep(target.DelaySeconds * 1000);
+		foreach (var popup in target.PopupXPaths)
 		{
-			new(By.XPath("//*[@id=\"google_ads_iframe_/119229185/Gandul.ro/Articol_Intext_New_0__container__\"]"),
-				@"C:\Users\vb\Desktop\ads\test.jpg",
-				2),
-		},
-		outputPath: $@"C:\Users\vb\Desktop\ads\{url.Host}_{DateTime.UtcNow.Ticks}.png"
-	);
+			try 
+			{
+				driver.FindElement(By.XPath(popup)).Click();
+			}
+			catch
+			{
+				Console.WriteLine($"Popup '{popup}' not found");
+			}
+		}
+
+		var queries = target
+			.AdReplacements
+			.Select(ad => new AdQuery(
+				Selector: By.XPath(ad.XPath),
+				ReplacementPath: ad.ImagePath,
+				OutputPath: (suffix) => Path.Combine(target.OutputDir, $"{url.Host}_{DateTime.UtcNow.Ticks}_{suffix}.png"),
+				DelaySec: target.DelaySeconds))
+			.ToList();
+
+		driver.CaptureAds(queries);
+	}
 	
 	driver.Quit();
 }
 
-public record AdQuery(By Selector, string ReplacementPath, int? DelaySec = null) 
-{
+public record AdQuery(By Selector, string ReplacementPath, Func<string, string> OutputPath, int? DelaySec = null) 
+{	
+	private const string Before = "before";
+	private const string After = "after";
+	
 	public void Execute(WebDriver driver)
 	{
 		try
 		{
-			if (DelaySec.HasValue) Thread.Sleep(DelaySec.Value * 1000);
+			var delay = DelaySec.HasValue ? DelaySec.Value * 1000 : 0;
+			if (DelaySec.HasValue) Thread.Sleep(delay);
 			var ad = driver.FindElement(Selector);
 			driver.ExecuteScript("arguments[0].scrollIntoView(true);", ad);
+			
+			if (DelaySec.HasValue) Thread.Sleep(delay);
+			Capture(driver, ad, Before);
+			
 			var img = File.ReadAllBytes(ReplacementPath);
 			var base64Img = Convert.ToBase64String(img);
 			var dataUri = $"data:image/png;base64,{base64Img}";
-			var script = $"arguments[0].outerHTML = '<img src=\"{dataUri}\" />';";
-			driver.ExecuteScript(script, ad);
+			driver.ExecuteScript($"arguments[0].outerHTML = '<img src=\"{dataUri}\" />';", ad);
+			
+			if (DelaySec.HasValue) Thread.Sleep(delay);
+			Capture(driver, ad, After);
 		}
 		catch (NoSuchElementException)
 		{
-			this.Dump("ad not found");
+			Console.WriteLine($"Ad not found at xpath '{Selector.ToString()}'");
 		}
 		catch (Exception ex)
 		{
-			ex.Dump();
+			Console.WriteLine(ex.Message);
 		}
+	}
+
+	private void Capture(WebDriver driver, IWebElement ad, string suffix)
+	{
+		var screenBounds = Screen.PrimaryScreen.Bounds;
+		using var bitmap = new Bitmap(screenBounds.Width, screenBounds.Height);
+		using var graphics = Graphics.FromImage(bitmap);
+		graphics.CopyFromScreen(Point.Empty, Point.Empty, screenBounds.Size);
+		bitmap.Save(OutputPath(suffix), ImageFormat.Png);
 	}
 }
 
@@ -287,16 +327,35 @@ ChromeDriver InitDriver(string path, bool headless)
 
 static class Extensions 
 {	
-	public static void CaptureAds(this WebDriver driver, List<AdQuery> queries, string outputPath)
+	public static void CaptureAds(this WebDriver driver, List<AdQuery> queries)
 	{
+		driver.Manage().Window.Maximize();
+		
 		foreach (var query in queries)
 		{
 			query.Execute(driver);
 		}
-
-		// i want the screenshot to include the windows host machine bottom menu bar so that the date & time are visible
-		driver.Manage().Window.Maximize();
-		
-		driver.GetScreenshot().SaveAsFile(outputPath);
 	}
+}
+
+public class Config
+{
+	public string WebDriverPath { get; set; }
+	public bool Headless { get; set; }
+	public List<Target> Targets { get; set; }
+}
+
+public class Target
+{
+	public string Url { get; set; }
+	public int DelaySeconds { get; set; }
+	public List<string> PopupXPaths { get; set; }
+	public List<AdReplacement> AdReplacements { get; set; }
+	public string OutputDir { get; set; }
+}
+
+public class AdReplacement
+{
+	public string XPath { get; set; }
+	public string ImagePath { get; set; }
 }

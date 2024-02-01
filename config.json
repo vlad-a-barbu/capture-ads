@@ -1,0 +1,20 @@
+{
+    "WebDriverPath" : "C:\\Users\\vb\\Downloads\\chromedriver-win64\\chromedriver-win64\\chromedriver.exe",
+    "Headless" : false,
+    "Targets" : [
+        {
+            "Url" : "https://www.gandul.ro/?p=20141190&preview=true/?utm_source=square_banner&utm_id=campanie_interna",
+            "DelaySeconds" : 2,
+            "PopupXPaths" : [
+                "/html/body/div[13]/div[2]/div[1]/div[2]/div[2]/button[1]"
+            ],
+            "AdReplacements" : [
+                {
+                    "XPath" : "//*[@id=\"google_ads_iframe_/119229185/Gandul.ro/Articol_Intext_New_0__container__\"]",
+                    "ImagePath" : "C:\\Users\\vb\\Desktop\\ads-proj\\chrome-ext\\logo.png"
+                }
+            ],
+            "OutputDir" : "C:\\Users\\vb\\Desktop\\ads"
+        }
+    ]
+}
